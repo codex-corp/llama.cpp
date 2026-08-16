@@ -192,7 +192,43 @@ FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
 }
 #endif
 
-#if defined(DATA_A_Q2_K)
+
+#if defined(DATA_A_TQ2_0)
+FLOAT_TYPE get_dm(uint ib) {
+    return FLOAT_TYPE(data_a[ib / 8].d);
+}
+
+// 4-byte loads for TQ2_0 blocks (same qs layout as q2_K, single f16 d per 256)
+i32vec4 repack4(uint ib, uint iqs) {
+    const uint ib_k = ib / 8;
+    const uint iqs_k = (ib % 8) * 8 + iqs;
+
+    const uint qs_idx = (iqs_k / 32) * 8 + (iqs_k % 8);
+    const uint qs_shift = ((iqs_k % 32) / 8) * 2;
+
+    return i32vec4((data_a_packed32[ib_k].qs[qs_idx    ] >> qs_shift) & 0x03030303,
+                   (data_a_packed32[ib_k].qs[qs_idx + 1] >> qs_shift) & 0x03030303,
+                   (data_a_packed32[ib_k].qs[qs_idx + 2] >> qs_shift) & 0x03030303,
+                   (data_a_packed32[ib_k].qs[qs_idx + 3] >> qs_shift) & 0x03030303);
+}
+
+FLOAT_TYPE mul_q8_1(const int32_t q_sum, const float da, const vec2 dsb, const int32_t sum_divisor) {
+    // w = (q - 1) * d, so result = d * (sum(b*q) - sum(b)) = d * (q_sum*d_b - s_b/divisor)
+    return FLOAT_TYPE(da * (float(q_sum) * dsb.x - dsb.y / float(sum_divisor)));
+}
+
+FLOAT_TYPE mmvq_dot_product(const uint ib_a, const uint iqs) {
+    int32_t q_sum = 0;
+    const i32vec4 qs_a = repack4(ib_a, iqs);
+    q_sum += dotPacked4x8EXT(qs_a.x, cache_b_qs[0]);
+    q_sum += dotPacked4x8EXT(qs_a.y, cache_b_qs[1]);
+    q_sum += dotPacked4x8EXT(qs_a.z, cache_b_qs[2]);
+    q_sum += dotPacked4x8EXT(qs_a.w, cache_b_qs[3]);
+
+    // 16 quants per call => divide sums by 32/16 = 2
+    return mul_q8_1(q_sum, get_dm(ib_a), cache_b_ds, 2);
+}
+#elif defined(DATA_A_Q2_K)
 // 4-byte loads for Q2_K blocks (84 bytes)
 i32vec4 repack4(uint ib, uint iqs) {
     const uint ib_k = ib / 8;

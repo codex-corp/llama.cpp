@@ -66,6 +66,12 @@ struct block_a_cache {
     u8vec2 scales;
     FLOAT_TYPEV2 dm;
 };
+#elif defined(DATA_A_TQ2_0)
+#define QUANT_R_MMQ 4
+struct block_a_cache {
+    uint32_t qs[2];
+    FLOAT_TYPE dm;
+};
 #elif defined(DATA_A_Q3_K)
 #define QUANT_R_MMQ 2
 struct block_a_cache {
