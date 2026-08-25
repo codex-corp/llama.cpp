@@ -1,0 +1,129 @@
+name: Publish Maple b2 Windows release
+
+on:
+  push:
+    branches:
+      - maple-vulkan-build
+    paths:
+      - .github/workflows/publish-maple-b2-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: maple-b2
+  CUSTOM_ARTIFACT_ID: '9546470547'
+  UPSTREAM_TAG: b10621
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets custom-artifact
+
+          # Preserve the exact custom b2 build that was tested in Jan.
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${CUSTOM_ARTIFACT_ID}/zip" \
+            > custom-artifact.zip
+          unzip -q custom-artifact.zip -d custom-artifact
+
+          CUSTOM_INNER="$(find custom-artifact -type f -name 'maple-llama-windows-vulkan-x64.zip' -print -quit)"
+          if [[ -z "${CUSTOM_INNER}" ]]; then
+            echo 'Could not find the tested Maple Vulkan package inside the Actions artifact.' >&2
+            exit 1
+          fi
+          cp "${CUSTOM_INNER}" release-assets/llama-b2-bin-win-vulkan-common_cpus-x64.zip
+
+          # Unmodified official llama.cpp Windows baselines from upstream.
+          curl -fL --retry 3 \
+            "https://github.com/ggml-org/llama.cpp/releases/download/${UPSTREAM_TAG}/llama-${UPSTREAM_TAG}-bin-win-cpu-x64.zip" \
+            -o "release-assets/llama-${UPSTREAM_TAG}-bin-win-cpu-x64.zip"
+          curl -fL --retry 3 \
+            "https://github.com/ggml-org/llama.cpp/releases/download/${UPSTREAM_TAG}/llama-${UPSTREAM_TAG}-bin-win-vulkan-x64.zip" \
+            -o "release-assets/llama-${UPSTREAM_TAG}-bin-win-vulkan-x64.zip"
+
+          (cd release-assets && sha256sum *.zip > SHA256SUMS.txt)
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Maple Preview / DeepGrove llama.cpp Windows b2
+
+          This release keeps the tested Windows build used for Maple Preview together with two unmodified upstream llama.cpp Windows baseline builds for easy comparison and fallback.
+
+          ### Assets
+
+          - `llama-b2-bin-win-vulkan-common_cpus-x64.zip`
+            - Custom DeepGrove Maple-capable llama.cpp Windows x64 build.
+            - Vulkan enabled, including the TQ2_0 Vulkan path used by Maple Preview.
+            - Jan-compatible archive naming.
+            - Includes the OpenSSL runtime DLLs required by `llama-server.exe` (`libssl-3-x64.dll` and `libcrypto-3-x64.dll`).
+            - This is the exact packaged b2 build that was tested before publishing this release.
+
+          - `llama-b10621-bin-win-cpu-x64.zip`
+            - Official, unmodified upstream `ggml-org/llama.cpp` Windows CPU x64 build from tag `b10621`.
+
+          - `llama-b10621-bin-win-vulkan-x64.zip`
+            - Official, unmodified upstream `ggml-org/llama.cpp` Windows Vulkan x64 build from tag `b10621`.
+
+          - `SHA256SUMS.txt`
+            - SHA-256 checksums for all ZIP assets.
+
+          ### Jan
+
+          In Jan, install `llama-b2-bin-win-vulkan-common_cpus-x64.zip` from:
+
+          `Settings -> Llama.cpp -> Install Backend from File`
+
+          Then select release version `b2` and backend `win-vulkan-common_cpus-x64`.
+
+          ### Maple Preview note
+
+          Maple Preview loaded correctly with this build. In one tested Intel Arc A750 8 GB setup, GPU offload through the experimental Vulkan/TQ2_0 path produced incorrect generations, while `GPU Layers = 0` (CPU-only) produced correct output and measured about 91 tok/s on an Intel Core i7-14700. This is a single hardware/runtime observation, not a universal benchmark.
+
+          For Intel Arc users, CPU-only is therefore the safer starting point for Maple Preview with this b2 build. Vulkan support should be treated as experimental until validated on the target GPU/driver.
+
+          ### Provenance
+
+          This repository is a fork of `deepgrove-ai/llama.cpp`. The two `b10621` baseline ZIPs are redistributed unchanged from the official `ggml-org/llama.cpp` release for convenience and comparison.
+          EOF
+
+      - name: Publish pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" release-assets/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title 'Maple Preview Windows b2' \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create "${RELEASE_TAG}" release-assets/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title 'Maple Preview Windows b2' \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
