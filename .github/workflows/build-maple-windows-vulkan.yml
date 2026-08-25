@@ -5,16 +5,9 @@ on:
   push:
     branches:
       - maple-vulkan-build
-    paths:
-      - '.github/workflows/build-maple-windows-vulkan.yml'
-      - '**/CMakeLists.txt'
-      - '**/*.cmake'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.c'
-      - '**/*.cpp'
-      - '**/*.comp'
-      - '**/*.glsl'
+  pull_request:
+    branches:
+      - main
 
 jobs:
   windows-vulkan:
