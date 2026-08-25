@@ -58,7 +58,26 @@ jobs:
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item build\bin\Release\* package\ -Recurse -Force
           Copy-Item LICENSE package\LICENSE -Force
+
+          # CMake links the Windows server/common DLLs against the OpenSSL 3
+          # installation on the GitHub runner. The runtime DLLs are not emitted
+          # into build/bin/Release automatically, so bundle them explicitly.
+          $opensslBin = 'C:\Program Files\OpenSSL\bin'
+          $ssl = Join-Path $opensslBin 'libssl-3-x64.dll'
+          $crypto = Join-Path $opensslBin 'libcrypto-3-x64.dll'
+          if (-not (Test-Path $ssl)) { throw "Missing OpenSSL runtime: $ssl" }
+          if (-not (Test-Path $crypto)) { throw "Missing OpenSSL runtime: $crypto" }
+          Copy-Item $ssl package\ -Force
+          Copy-Item $crypto package\ -Force
+
           Compress-Archive -Path package\* -DestinationPath maple-llama-windows-vulkan-x64.zip -Force
+
+      - name: Verify packaged runtime dependencies
+        shell: pwsh
+        run: |
+          if (-not (Test-Path package\libssl-3-x64.dll)) { throw 'libssl-3-x64.dll missing from package' }
+          if (-not (Test-Path package\libcrypto-3-x64.dll)) { throw 'libcrypto-3-x64.dll missing from package' }
+          Get-ChildItem package\lib*-3-x64.dll | Select-Object Name,Length
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
