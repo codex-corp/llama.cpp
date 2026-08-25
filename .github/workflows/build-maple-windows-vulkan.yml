@@ -1,0 +1,75 @@
+name: Build Maple Windows Vulkan
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - maple-vulkan-build
+    paths:
+      - '.github/workflows/build-maple-windows-vulkan.yml'
+      - '**/CMakeLists.txt'
+      - '**/*.cmake'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.c'
+      - '**/*.cpp'
+      - '**/*.comp'
+      - '**/*.glsl'
+
+jobs:
+  windows-vulkan:
+    runs-on: windows-2025
+
+    env:
+      VULKAN_VERSION: 1.4.321.1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\VulkanSDK.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK.exe" --accept-licenses --default-answer --confirm-command install
+          "VULKAN_SDK=C:\VulkanSDK\${env:VULKAN_VERSION}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "C:\VulkanSDK\${env:VULKAN_VERSION}\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Configure
+        shell: cmd
+        run: >-
+          cmake -S . -B build
+          -A x64
+          -DGGML_VULKAN=ON
+          -DGGML_NATIVE=OFF
+          -DLLAMA_BUILD_TESTS=OFF
+          -DLLAMA_BUILD_EXAMPLES=OFF
+          -DLLAMA_BUILD_TOOLS=ON
+          -DLLAMA_BUILD_SERVER=ON
+
+      - name: Build
+        shell: cmd
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify binaries
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse build\bin\Release | Select-Object Name,Length
+          if (-not (Test-Path build\bin\Release\llama-server.exe)) { throw 'llama-server.exe missing' }
+          if (-not (Test-Path build\bin\Release\llama-cli.exe)) { throw 'llama-cli.exe missing' }
+
+      - name: Package Jan bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item build\bin\Release\* package\ -Recurse -Force
+          Copy-Item LICENSE package\LICENSE -Force
+          Compress-Archive -Path package\* -DestinationPath maple-llama-windows-vulkan-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maple-llama-windows-vulkan-x64
+          path: maple-llama-windows-vulkan-x64.zip
+          if-no-files-found: error
